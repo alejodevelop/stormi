@@ -138,14 +138,15 @@ This avoids clobbering existing project rules while still letting you pick up ki
 PowerShell:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -Command "iwr https://raw.githubusercontent.com/alejodevelop/opencode-memory-kit/main/install.ps1 -UseBasicParsing | iex"
+$script = (iwr "https://raw.githubusercontent.com/alejodevelop/opencode-memory-kit/main/install.ps1" -UseBasicParsing).Content
+& ([scriptblock]::Create($script)) -Force
 powershell -ExecutionPolicy Bypass -File "$HOME\.config\opencode\opencode-memory-kit\scripts\bootstrap-project.ps1" -Target .
 ```
 
 Unix shell:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/alejodevelop/opencode-memory-kit/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/alejodevelop/opencode-memory-kit/main/install.sh | sh -s -- --force
 sh "$HOME/.config/opencode/opencode-memory-kit/scripts/bootstrap-project.sh" .
 ```
 
@@ -154,6 +155,7 @@ Safe rerun behavior:
 - Refreshes the managed block in `AGENTS.md`.
 - Creates missing scaffold files under `docs/ai-memory/`.
 - Preserves existing saved notes and feature memory files.
+- Uses `-Force` or `--force` only for the global kit reinstall step.
 - Does not overwrite current memory unless you explicitly use `--force`.
 
 ## Daily workflow inside a project
