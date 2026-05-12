@@ -63,6 +63,7 @@ Get-ChildItem -File -Recurse (Join-Path $repoRoot "scripts") | Where-Object {
 Write-Host ""
 Write-Host "OpenCode memory kit installed under $ConfigDir"
 Write-Host "Commands now available: /remember-feature, /recall-feature, and /review-memory"
-Write-Host "Bootstrap new repos with:"
+Write-Host "Bootstrap or refresh a repo with:"
 $bootstrapPath = Join-Path $kitHome "scripts\bootstrap-project.ps1"
 Write-Host ('  powershell -ExecutionPolicy Bypass -File "{0}" -Target .' -f $bootstrapPath)
+Write-Host "Rerun the same bootstrap command later to refresh managed instructions without overwriting saved memory notes."

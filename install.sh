@@ -301,6 +301,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$startMarker = "<!-- opencode-memory-kit:start -->"
+$endMarker = "<!-- opencode-memory-kit:end -->"
 
 function Write-Utf8NoBomFile {
     param(
@@ -312,13 +314,87 @@ function Write-Utf8NoBomFile {
     [System.IO.File]::WriteAllText($Path, $Content, $encoding)
 }
 
+function Get-NewlineStyle {
+    param(
+        [string]$Content
+    )
+
+    if ($Content.Contains("`r`n")) {
+        return "`r`n"
+    }
+
+    return "`n"
+}
+
+function Convert-Newlines {
+    param(
+        [string]$Content,
+        [string]$Newline
+    )
+
+    return (($Content -replace "`r`n", "`n") -replace "`n", $Newline)
+}
+
+function Sync-ManagedAgentsBlock {
+    param(
+        [string]$Path,
+        [string]$ManagedBlockPath,
+        [string]$StartMarker,
+        [string]$EndMarker
+    )
+
+    $current = [System.IO.File]::ReadAllText($Path)
+    $managedBlock = [System.IO.File]::ReadAllText($ManagedBlockPath)
+    $startCount = [regex]::Matches($current, [regex]::Escape($StartMarker)).Count
+    $endCount = [regex]::Matches($current, [regex]::Escape($EndMarker)).Count
+    $newline = Get-NewlineStyle -Content $current
+    $managedBlock = Convert-Newlines -Content $managedBlock -Newline $newline
+
+    if ($startCount -eq 0 -and $endCount -eq 0) {
+        if ([string]::IsNullOrWhiteSpace($current)) {
+            $updated = $managedBlock
+        }
+        elseif ($current.EndsWith($newline)) {
+            $updated = $current + $newline + $managedBlock
+        }
+        else {
+            $updated = $current + $newline + $newline + $managedBlock
+        }
+
+        Write-Utf8NoBomFile -Path $Path -Content $updated
+        Write-Host "Updated AGENTS.md (appended memory workflow block)"
+        return
+    }
+
+    if ($startCount -ne 1 -or $endCount -ne 1) {
+        throw "Invalid AGENTS.md markers in $Path. Expected exactly one managed block or none."
+    }
+
+    $startIndex = $current.IndexOf($StartMarker, [System.StringComparison]::Ordinal)
+    $endIndex = $current.IndexOf($EndMarker, [System.StringComparison]::Ordinal)
+
+    if ($startIndex -gt $endIndex) {
+        throw "Invalid AGENTS.md markers in $Path. Fix the marker order manually."
+    }
+
+    $suffixStart = $endIndex + $EndMarker.Length
+    $updated = $current.Substring(0, $startIndex) + $managedBlock + $current.Substring($suffixStart)
+
+    if ($updated -eq $current) {
+        Write-Host "AGENTS.md already up to date"
+        return
+    }
+
+    Write-Utf8NoBomFile -Path $Path -Content $updated
+    Write-Host "Updated AGENTS.md (refreshed managed memory workflow block)"
+}
+
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent $scriptDir
 $templateRoot = Join-Path $repoRoot "templates\project"
 $docsTemplateRoot = Join-Path $templateRoot "docs"
 $fullAgentsTemplate = Join-Path $templateRoot "AGENTS.md"
 $appendAgentsTemplate = Join-Path $templateRoot "AGENTS.memory.md"
-$marker = "opencode-memory-kit:start"
 
 if (-not (Test-Path -Path $Target -PathType Container)) {
     throw "Target directory does not exist: $Target"
@@ -328,16 +404,7 @@ $resolvedTarget = (Resolve-Path $Target).Path
 $targetAgents = Join-Path $resolvedTarget "AGENTS.md"
 
 if (Test-Path $targetAgents) {
-    $current = [System.IO.File]::ReadAllText($targetAgents)
-    if ($current.Contains($marker)) {
-        Write-Host "Skipped AGENTS.md (memory workflow already present)"
-    }
-    else {
-        $appendBlock = [System.IO.File]::ReadAllText($appendAgentsTemplate)
-        $separator = if ($current.EndsWith("`n")) { "`r`n" } else { "`r`n`r`n" }
-        Write-Utf8NoBomFile -Path $targetAgents -Content ($current + $separator + $appendBlock)
-        Write-Host "Updated AGENTS.md (appended memory workflow block)"
-    }
+    Sync-ManagedAgentsBlock -Path $targetAgents -ManagedBlockPath $appendAgentsTemplate -StartMarker $startMarker -EndMarker $endMarker
 }
 else {
     Copy-Item $fullAgentsTemplate $targetAgents
@@ -374,10 +441,13 @@ Write-Host ""
 Write-Host "Project memory workflow is ready in $resolvedTarget"
 Write-Host "Next steps:"
 Write-Host "  1. Open the project in OpenCode"
-Write-Host "  2. Build as usual"
-Write-Host "  3. Run /remember-feature <slug> when a feature is accepted"
-Write-Host "  4. Run /recall-feature <query> in future sessions"
-Write-Host "  5. Run /review-memory [scope] after large refactors or removals"
+Write-Host "  2. Work as usual with plan and build"
+Write-Host "  3. Let OpenCode delegate broad reading to explore and multi-step execution to general"
+Write-Host "  4. Run /remember-feature <slug> when a feature is accepted"
+Write-Host "  5. Run /recall-feature <query> in future sessions"
+Write-Host "  6. Run /review-memory [scope] after large refactors or removals"
+Write-Host "You can rerun this same bootstrap command later to refresh managed AGENTS.md instructions."
+Write-Host "Saved notes under docs/ai-memory/ stay intact unless you use --force."
 EOF_OPENCODE_MEMORY_KIT_SCRIPTS_BOOTSTRAP_PROJECT_PS1
 
 write_file "opencode-memory-kit/scripts/bootstrap-project.sh" <<'EOF_OPENCODE_MEMORY_KIT_SCRIPTS_BOOTSTRAP_PROJECT_SH'
@@ -386,6 +456,8 @@ set -eu
 
 target="."
 force="0"
+start_marker="<!-- opencode-memory-kit:start -->"
+end_marker="<!-- opencode-memory-kit:end -->"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -409,7 +481,113 @@ template_root="$repo_root/templates/project"
 docs_template_root="$template_root/docs"
 full_agents_template="$template_root/AGENTS.md"
 append_agents_template="$template_root/AGENTS.memory.md"
-marker="opencode-memory-kit:start"
+
+sync_agents_file() {
+  file_path="$1"
+  use_crlf="0"
+  cr=$(printf '\r')
+
+  if grep -q "$cr" "$file_path"; then
+    use_crlf="1"
+  fi
+
+  start_count=$(grep -F -c "$start_marker" "$file_path" || true)
+  end_count=$(grep -F -c "$end_marker" "$file_path" || true)
+
+  if [ "$start_count" -eq 0 ] && [ "$end_count" -eq 0 ]; then
+    sync_mode="append"
+  elif [ "$start_count" -eq 1 ] && [ "$end_count" -eq 1 ]; then
+    start_line=$(awk -v marker="$start_marker" 'index($0, marker) { print NR; exit }' "$file_path")
+    end_line=$(awk -v marker="$end_marker" 'index($0, marker) { print NR; exit }' "$file_path")
+
+    if [ "$start_line" -ge "$end_line" ]; then
+      printf '%s\n' "Invalid AGENTS.md markers in $file_path. Fix the marker order manually." >&2
+      exit 1
+    fi
+
+    sync_mode="replace"
+  else
+    printf '%s\n' "Invalid AGENTS.md markers in $file_path. Expected exactly one managed block or none." >&2
+    exit 1
+  fi
+
+  tmp_file=$(mktemp)
+
+  if [ "$sync_mode" = "replace" ]; then
+    awk -v use_crlf="$use_crlf" -v start="$start_marker" -v end="$end_marker" -v replacement="$append_agents_template" '
+      BEGIN {
+        ORS = (use_crlf == "1") ? "\r\n" : "\n"
+      }
+
+      function print_replacement(   line) {
+        while ((getline line < replacement) > 0) {
+          sub(/\r$/, "", line)
+          print line
+        }
+        close(replacement)
+      }
+
+      {
+        sub(/\r$/, "", $0)
+
+        if (!in_block && index($0, start)) {
+          print_replacement()
+          in_block = 1
+          next
+        }
+
+        if (in_block) {
+          if (index($0, end)) {
+            in_block = 0
+          }
+          next
+        }
+
+        print $0
+      }
+    ' "$file_path" > "$tmp_file"
+  else
+    awk -v use_crlf="$use_crlf" -v replacement="$append_agents_template" '
+      BEGIN {
+        ORS = (use_crlf == "1") ? "\r\n" : "\n"
+      }
+
+      function print_replacement(   line) {
+        while ((getline line < replacement) > 0) {
+          sub(/\r$/, "", line)
+          print line
+        }
+        close(replacement)
+      }
+
+      {
+        sub(/\r$/, "", $0)
+        print $0
+      }
+
+      END {
+        if (NR > 0) {
+          print ""
+        }
+        print_replacement()
+      }
+    ' "$file_path" > "$tmp_file"
+  fi
+
+  if cmp -s "$file_path" "$tmp_file"; then
+    rm -f "$tmp_file"
+    printf '%s\n' "AGENTS.md already up to date"
+    return
+  fi
+
+  mv "$tmp_file" "$file_path"
+
+  if [ "$sync_mode" = "replace" ]; then
+    printf '%s\n' "Updated AGENTS.md (refreshed managed memory workflow block)"
+  else
+    printf '%s\n' "Updated AGENTS.md (appended memory workflow block)"
+  fi
+}
 
 if [ ! -d "$target" ]; then
   printf '%s\n' "Target directory does not exist: $target" >&2
@@ -420,13 +598,7 @@ target=$(CDPATH= cd -- "$target" && pwd)
 target_agents="$target/AGENTS.md"
 
 if [ -f "$target_agents" ]; then
-  if grep -q "$marker" "$target_agents"; then
-    printf '%s\n' "Skipped AGENTS.md (memory workflow already present)"
-  else
-    printf '\n\n' >> "$target_agents"
-    cat "$append_agents_template" >> "$target_agents"
-    printf '%s\n' "Updated AGENTS.md (appended memory workflow block)"
-  fi
+  sync_agents_file "$target_agents"
 else
   cp "$full_agents_template" "$target_agents"
   printf '%s\n' "Created AGENTS.md"
@@ -457,22 +629,43 @@ printf '\n'
 printf '%s\n' "Project memory workflow is ready in $target"
 printf '%s\n' "Next steps:"
 printf '%s\n' "  1. Open the project in OpenCode"
-printf '%s\n' "  2. Build as usual"
-printf '%s\n' "  3. Run /remember-feature <slug> when a feature is accepted"
-printf '%s\n' "  4. Run /recall-feature <query> in future sessions"
-printf '%s\n' "  5. Run /review-memory [scope] after large refactors or removals"
+printf '%s\n' "  2. Work as usual with plan and build"
+printf '%s\n' "  3. Let OpenCode delegate broad reading to explore and multi-step execution to general"
+printf '%s\n' "  4. Run /remember-feature <slug> when a feature is accepted"
+printf '%s\n' "  5. Run /recall-feature <query> in future sessions"
+printf '%s\n' "  6. Run /review-memory [scope] after large refactors or removals"
+printf '%s\n' "You can rerun this same bootstrap command later to refresh managed AGENTS.md instructions."
+printf '%s\n' "Saved notes under docs/ai-memory/ stay intact unless you use --force."
 EOF_OPENCODE_MEMORY_KIT_SCRIPTS_BOOTSTRAP_PROJECT_SH
 
 write_file "opencode-memory-kit/templates/project/AGENTS.md" <<'EOF_OPENCODE_MEMORY_KIT_TEMPLATES_PROJECT_AGENTS_MD'
 # Project Instructions
 
 <!-- opencode-memory-kit:start -->
+## Thin Main Thread
+
+Use OpenCode's built-in `plan` and `build` agents as the main conversation thread.
+
+- Keep the main thread thin: clarify the goal, choose the next move, delegate broader work, and return with a short synthesis.
+- Prefer the built-in `explore` subagent for codebase search, reading 4+ files, understanding architecture, tracing behavior, or comparing options.
+- Prefer the built-in `general` subagent for multi-step execution, multi-file changes, tests, builds, and non-trivial bash.
+- Keep work inline only when it is small and obvious: 1-3 quick reads, one narrow answer, or a mechanical single-file tweak.
+- When delegating, ask for a compact handoff instead of a full transcript.
+- Use a soft handoff rubric for subagent replies and omit sections that do not apply:
+  - `Findings` or `Outcome`
+  - `Files`
+  - `Risks` or `Blockers`
+  - `Verification`
+  - `Next step`
+- Keep subagent returns brief: about 5-8 bullets, no long logs, and no narration of every tool call.
+
 ## Project Memory Workflow
 
 This project uses a durable AI memory layer stored in `docs/ai-memory/`.
 
 ### Persistent Memory
 
+- Durable memory is for the repo's long-lived truth, not for temporary task handoffs.
 - Use `docs/ai-memory/INDEX.md` as the entry point.
 - For explicit manual lookup, use `/recall-feature <query>`.
 - Memory is intentionally lazy-loaded. Do not read every file in `docs/ai-memory/` by default.
@@ -483,12 +676,16 @@ This project uses a durable AI memory layer stored in `docs/ai-memory/`.
 - Prefer `docs/ai-memory/features/*.md` for feature-specific implementation context.
 - Prefer `docs/ai-memory/decisions.md` for durable cross-feature decisions and constraints.
 - Prefer `docs/ai-memory/troubleshooting.md` for recurring errors, exact messages, root causes, and fixes.
+- If previous work matters for a delegated task, look up the relevant memory first and pass only the useful summary or exact note paths to the subagent.
+- `explore` may read memory when prior work, decisions, regressions, or recurring bugs are central to the task.
+- `general` should prefer caller-provided memory summaries or exact note paths over broad memory searches.
 
 ### Updating Memory
 
 - After a feature is implemented, iterated on, and accepted, persist durable context with `/remember-feature <kebab-case-slug>`.
 - After a large refactor, feature removal, or cleanup pass, review stale memory with `/review-memory [scope]`.
 - `docs/ai-memory/` should represent the current truth of the repo, not a historical archive.
+- Only write durable memory when work is accepted or a real cleanup pass is happening.
 - `/remember-feature` and `/review-memory` may automatically rewrite or trim stale notes when confidence is high.
 - Deletions from the active memory tree require a brief review before removal.
 - The memory update should capture only long-lived project knowledge:
@@ -496,7 +693,7 @@ This project uses a durable AI memory layer stored in `docs/ai-memory/`.
   - important files or modules touched
   - decisions that future work must respect
   - reusable debugging knowledge
-- Do not store raw conversation logs, temporary speculation, or large diff narration.
+- Do not store raw conversation logs, temporary speculation, large diff narration, or subagent handoff notes.
 
 ### Memory Quality Bar
 
@@ -510,12 +707,30 @@ EOF_OPENCODE_MEMORY_KIT_TEMPLATES_PROJECT_AGENTS_MD
 
 write_file "opencode-memory-kit/templates/project/AGENTS.memory.md" <<'EOF_OPENCODE_MEMORY_KIT_TEMPLATES_PROJECT_AGENTS_MEMORY_MD'
 <!-- opencode-memory-kit:start -->
+## Thin Main Thread
+
+Use OpenCode's built-in `plan` and `build` agents as the main conversation thread.
+
+- Keep the main thread thin: clarify the goal, choose the next move, delegate broader work, and return with a short synthesis.
+- Prefer the built-in `explore` subagent for codebase search, reading 4+ files, understanding architecture, tracing behavior, or comparing options.
+- Prefer the built-in `general` subagent for multi-step execution, multi-file changes, tests, builds, and non-trivial bash.
+- Keep work inline only when it is small and obvious: 1-3 quick reads, one narrow answer, or a mechanical single-file tweak.
+- When delegating, ask for a compact handoff instead of a full transcript.
+- Use a soft handoff rubric for subagent replies and omit sections that do not apply:
+  - `Findings` or `Outcome`
+  - `Files`
+  - `Risks` or `Blockers`
+  - `Verification`
+  - `Next step`
+- Keep subagent returns brief: about 5-8 bullets, no long logs, and no narration of every tool call.
+
 ## Project Memory Workflow
 
 This project uses a durable AI memory layer stored in `docs/ai-memory/`.
 
 ### Persistent Memory
 
+- Durable memory is for the repo's long-lived truth, not for temporary task handoffs.
 - Use `docs/ai-memory/INDEX.md` as the entry point.
 - For explicit manual lookup, use `/recall-feature <query>`.
 - Memory is intentionally lazy-loaded. Do not read every file in `docs/ai-memory/` by default.
@@ -526,12 +741,16 @@ This project uses a durable AI memory layer stored in `docs/ai-memory/`.
 - Prefer `docs/ai-memory/features/*.md` for feature-specific implementation context.
 - Prefer `docs/ai-memory/decisions.md` for durable cross-feature decisions and constraints.
 - Prefer `docs/ai-memory/troubleshooting.md` for recurring errors, exact messages, root causes, and fixes.
+- If previous work matters for a delegated task, look up the relevant memory first and pass only the useful summary or exact note paths to the subagent.
+- `explore` may read memory when prior work, decisions, regressions, or recurring bugs are central to the task.
+- `general` should prefer caller-provided memory summaries or exact note paths over broad memory searches.
 
 ### Updating Memory
 
 - After a feature is implemented, iterated on, and accepted, persist durable context with `/remember-feature <kebab-case-slug>`.
 - After a large refactor, feature removal, or cleanup pass, review stale memory with `/review-memory [scope]`.
 - `docs/ai-memory/` should represent the current truth of the repo, not a historical archive.
+- Only write durable memory when work is accepted or a real cleanup pass is happening.
 - `/remember-feature` and `/review-memory` may automatically rewrite or trim stale notes when confidence is high.
 - Deletions from the active memory tree require a brief review before removal.
 - The memory update should capture only long-lived project knowledge:
@@ -539,7 +758,7 @@ This project uses a durable AI memory layer stored in `docs/ai-memory/`.
   - important files or modules touched
   - decisions that future work must respect
   - reusable debugging knowledge
-- Do not store raw conversation logs, temporary speculation, or large diff narration.
+- Do not store raw conversation logs, temporary speculation, large diff narration, or subagent handoff notes.
 
 ### Memory Quality Bar
 
@@ -655,5 +874,6 @@ printf '%s\n' "  - commands/"
 printf '%s\n' "  - opencode-memory-kit/"
 printf '\n'
 printf '%s\n' "Commands now available: /remember-feature, /recall-feature, and /review-memory"
-printf '%s\n' "Bootstrap a new repo with:"
+printf '%s\n' "Bootstrap or refresh a repo with:"
 printf '%s\n' "  sh \"$bootstrap_path\" ."
+printf '%s\n' "Rerun the same bootstrap command later to refresh managed instructions without overwriting saved memory notes."

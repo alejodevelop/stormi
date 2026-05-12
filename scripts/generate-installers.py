@@ -136,8 +136,9 @@ def generate_install_ps1() -> str:
             'Write-Host "  - opencode-memory-kit/"',
             'Write-Host ""',
             'Write-Host "Commands now available: /remember-feature, /recall-feature, and /review-memory"',
-            'Write-Host "Bootstrap a new repo with:"',
+            'Write-Host "Bootstrap or refresh a repo with:"',
             "Write-Host ('  powershell -ExecutionPolicy Bypass -File \"{0}\" -Target .' -f $bootstrapPath)",
+            'Write-Host "Rerun the same bootstrap command later to refresh managed instructions without overwriting saved memory notes."',
         ]
     )
 
@@ -221,8 +222,9 @@ def generate_install_sh() -> str:
             "printf '%s\\n' \"  - opencode-memory-kit/\"",
             "printf '\\n'",
             "printf '%s\\n' \"Commands now available: /remember-feature, /recall-feature, and /review-memory\"",
-            "printf '%s\\n' \"Bootstrap a new repo with:\"",
+            "printf '%s\\n' \"Bootstrap or refresh a repo with:\"",
             'printf \'%s\\n\' "  sh \\"$bootstrap_path\\" ."',
+            "printf '%s\\n' \"Rerun the same bootstrap command later to refresh managed instructions without overwriting saved memory notes.\"",
         ]
     )
 

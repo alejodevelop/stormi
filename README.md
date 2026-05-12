@@ -1,6 +1,6 @@
 # OpenCode Memory Kit
 
-Reusable memory workflow for OpenCode projects.
+Reusable memory workflow for OpenCode projects, with lightweight delegation guidance for longer sessions.
 
 This repo gives you two things:
 
@@ -12,6 +12,7 @@ The goal is simple:
 - keep long-term project context inside each project repo
 - keep global OpenCode setup small and reusable
 - avoid saturating model context with old session noise
+- keep the main thread focused by leaning on OpenCode's built-in subagents when work gets broad
 
 ## What gets installed globally
 
@@ -33,6 +34,8 @@ These are reusable across projects.
 
 This is the durable memory that lives in the project and should be committed to Git.
 
+The bootstrapped `AGENTS.md` also teaches OpenCode to keep a thin main thread and prefer the built-in `explore` and `general` subagents for heavier work.
+
 ## Repo layout
 
 ```text
@@ -50,7 +53,8 @@ Use the default OpenCode directories. Do not override `OPENCODE_CONFIG_DIR` for 
 
 1. Install the kit once.
 2. Bootstrap each new repo once.
-3. Use `/remember-feature`, `/recall-feature`, and `/review-memory` during normal work.
+3. Work normally with `plan` and `build`, letting OpenCode delegate broader work to `explore` and `general`.
+4. Use `/remember-feature`, `/recall-feature`, and `/review-memory` during normal work.
 
 PowerShell install:
 
@@ -72,7 +76,7 @@ Typical usage:
 /review-memory auth
 ```
 
-That is the core flow. Use `/review-memory` after large refactors, removals, or cleanup passes.
+That is the core memory flow. Use `/review-memory` after large refactors, removals, or cleanup passes.
 
 ### One-command install from a public repo
 
@@ -98,9 +102,9 @@ This installs into the default OpenCode locations:
 
 You can rerun the same command later to update the installed kit.
 
-## Bootstrap a new repo
+## Bootstrap or refresh a repo
 
-After you create a new frontend or backend repo, seed the local memory files.
+Use the same bootstrap command for first-time setup and for later kit upgrades in an existing repo.
 
 PowerShell:
 
@@ -116,22 +120,50 @@ sh "$HOME/.config/opencode/opencode-memory-kit/scripts/bootstrap-project.sh" .
 
 ### Existing `AGENTS.md`
 
-If the target repo already has an `AGENTS.md`, the bootstrap script does not replace it.
+If the target repo already has an `AGENTS.md`, the bootstrap script keeps everything outside the kit-managed block intact.
 
-Instead, it appends a marked memory block:
+- If the markers already exist, rerunning bootstrap refreshes the block between them.
+- If the markers do not exist yet, bootstrap appends the managed block.
 
 - `<!-- opencode-memory-kit:start -->`
 - `<!-- opencode-memory-kit:end -->`
 
-This avoids clobbering existing project rules.
+This avoids clobbering existing project rules while still letting you pick up kit improvements later.
+
+### Update an existing repo
+
+1. Update the globally installed kit.
+2. Rerun the bootstrap script inside the repo.
+
+PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -Command "iwr https://raw.githubusercontent.com/alejodevelop/opencode-memory-kit/main/install.ps1 -UseBasicParsing | iex"
+powershell -ExecutionPolicy Bypass -File "$HOME\.config\opencode\opencode-memory-kit\scripts\bootstrap-project.ps1" -Target .
+```
+
+Unix shell:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/alejodevelop/opencode-memory-kit/main/install.sh | sh
+sh "$HOME/.config/opencode/opencode-memory-kit/scripts/bootstrap-project.sh" .
+```
+
+Safe rerun behavior:
+
+- Refreshes the managed block in `AGENTS.md`.
+- Creates missing scaffold files under `docs/ai-memory/`.
+- Preserves existing saved notes and feature memory files.
+- Does not overwrite current memory unless you explicitly use `--force`.
 
 ## Daily workflow inside a project
 
 1. Bootstrap the repo once.
 2. Work normally with `plan` and `build`.
-3. When a feature is accepted, run `/remember-feature <slug>`.
-4. In later sessions, run `/recall-feature <query>`.
-5. After large refactors, removals, or cleanup passes, run `/review-memory [scope]`.
+3. Let OpenCode use `explore` for broad reading and `general` for multi-step execution so the main session stays compact.
+4. When a feature is accepted, run `/remember-feature <slug>`.
+5. In later sessions, run `/recall-feature <query>`.
+6. After large refactors, removals, or cleanup passes, run `/review-memory [scope]`.
 
 Examples:
 
@@ -158,14 +190,27 @@ Examples:
 - Global commands and agents are reusable.
 - Project memory stays local to each repo.
 - Memory is lazy-loaded through `AGENTS.md` and `docs/ai-memory/INDEX.md`.
+- Delegation uses OpenCode's built-in `explore` and `general` subagents instead of custom code-work agents.
+- The main thread stays thin by delegating broad exploration and multi-step execution, then consuming compact handoffs.
 - The stored notes are short, searchable, and Git-tracked.
 - The active memory tree stays focused on current truth, while Git preserves history.
 
 ## Notes
 
 - `docs/ai-memory/` is intentionally not injected into OpenCode global instructions.
+- Durable memory is for accepted repo truth, not temporary subagent handoffs.
 - If you run `/remember-feature`, `/recall-feature`, or `/review-memory` in a repo that has not been bootstrapped yet, the command will tell you what is missing.
-- Use `--force` with the bootstrap scripts only when you want to overwrite existing template files under `docs/ai-memory/`.
+- Rerunning bootstrap without `--force` is the normal upgrade path for existing repos.
+- Use `--force` with the bootstrap scripts only when you intentionally want to overwrite existing template files under `docs/ai-memory/`.
+
+## Built-in delegation workflow
+
+- Keep `plan` and `build` as the main session agents.
+- Prefer `explore` when the task requires codebase search, reading 4+ files, architecture tracing, or option comparison.
+- Prefer `general` when the task requires multi-step execution, multi-file edits, tests, builds, or non-trivial bash.
+- Keep inline work for small and obvious tasks.
+- Ask subagents for compact handoffs instead of full transcripts.
+- When prior work matters, look up `docs/ai-memory/` first and pass only the relevant summary or note paths into the delegated task.
 
 ## Advanced usage
 

@@ -74,5 +74,6 @@ done
 printf '\n'
 printf '%s\n' "OpenCode memory kit installed under $config_dir"
 printf '%s\n' "Commands now available: /remember-feature, /recall-feature, and /review-memory"
-printf '%s\n' "Bootstrap new repos with:"
+printf '%s\n' "Bootstrap or refresh a repo with:"
 printf '%s\n' "  sh \"$kit_home/scripts/bootstrap-project.sh\" ."
+printf '%s\n' "Rerun the same bootstrap command later to refresh managed instructions without overwriting saved memory notes."
